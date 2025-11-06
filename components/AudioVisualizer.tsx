@@ -19,6 +19,40 @@ interface AudioVisualizerProps {
   onReset: () => void;
 }
 
+// 파형 스타일 정의
+const waveformStyles = [
+  {
+    name: '모던',
+    config: {
+      waveColor: '#A8B5FE',
+      progressColor: '#6366F1',
+      cursorColor: '#4F46E5',
+      barWidth: 2,
+      barRadius: 2,
+    }
+  },
+  {
+    name: '클래식',
+    config: {
+      waveColor: '#9CA3AF',
+      progressColor: '#10B981',
+      cursorColor: '#059669',
+      barWidth: 1,
+      barRadius: 0,
+    }
+  },
+  {
+    name: '네온',
+    config: {
+      waveColor: '#EC4899',
+      progressColor: '#A855F7',
+      cursorColor: '#FBBF24',
+      barWidth: 3,
+      barRadius: 3,
+    }
+  }
+];
+
 const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
@@ -31,12 +65,13 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState('00:00');
   const [duration, setDuration] = useState('00:00');
-  const [volume, setVolume] = useState(1);
-  const [lastVolume, setLastVolume] = useState(1);
+  const [volume, setVolume] = useState(0.8);
+  const [lastVolume, setLastVolume] = useState(0.8);
   const [isAnalyzingGender, setIsAnalyzingGender] = useState(false);
   const [genderResult, setGenderResult] = useState<string | null>(null);
   const [isAnalyzingSpeakers, setIsAnalyzingSpeakers] = useState(false);
   const [speakerCountResult, setSpeakerCountResult] = useState<string | null>(null);
+  const [currentStyle, setCurrentStyle] = useState(waveformStyles[0]);
 
 
   const handleResetZoom = useCallback(() => {
@@ -76,11 +111,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
 
     const wavesurfer = WaveSurfer.create({
       container: waveformRef.current,
-      waveColor: '#A8B5FE',
-      progressColor: '#6366F1',
-      cursorColor: '#4F46E5',
-      barWidth: 2,
-      barRadius: 2,
+      ...currentStyle.config,
       responsive: true,
       height: 130,
       normalize: true,
@@ -93,8 +124,8 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
 
     const magnifierWavesurfer = WaveSurfer.create({
         container: magnifierWaveformRef.current,
-        waveColor: '#CBD5E1',
-        progressColor: '#818CF8',
+        waveColor: '#CBD5E1', // Magnifier has a fixed color for clarity
+        progressColor: '#818CF8', // Magnifier has a fixed color for clarity
         cursorWidth: 0,
         responsive: true,
         height: 400, // 400% vertical zoom
@@ -152,7 +183,14 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
       magnifierWavesurfer.destroy();
       URL.revokeObjectURL(audioUrl);
     };
-  }, [file, handleResetZoom]);
+  }, [file, handleResetZoom, currentStyle]);
+
+  // Effect to update wavesurfer options when style changes without reloading the audio
+  useEffect(() => {
+    if (wavesurferRef.current) {
+      wavesurferRef.current.setOptions(currentStyle.config);
+    }
+  }, [currentStyle]);
 
   const handlePlayPause = () => {
     wavesurferRef.current?.playPause();
@@ -353,6 +391,25 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
         <p className="text-xs text-center text-gray-400 dark:text-gray-500 mt-2">
           팁: 파형 중앙에 마우스를 올리면 돋보기 기능이 활성화됩니다.
         </p>
+      </div>
+
+      <div className="my-6 flex items-center justify-center gap-6">
+        <span className="text-sm font-medium text-gray-600 dark:text-gray-300">파형 스타일:</span>
+        <div className="flex items-center gap-4">
+            {waveformStyles.map((style) => (
+                <label key={style.name} className="flex items-center space-x-2 cursor-pointer text-sm">
+                    <input
+                        type="radio"
+                        name="waveform-style"
+                        value={style.name}
+                        checked={currentStyle.name === style.name}
+                        onChange={() => setCurrentStyle(style)}
+                        className="form-radio h-4 w-4 text-indigo-600 dark:accent-indigo-500 focus:ring-indigo-500 border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700"
+                    />
+                    <span className="text-gray-700 dark:text-gray-200">{style.name}</span>
+                </label>
+            ))}
+        </div>
       </div>
 
       <div className="mt-6 p-4 rounded-lg bg-gray-50 dark:bg-gray-700/50">
