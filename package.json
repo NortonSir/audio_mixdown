@@ -1,5 +1,5 @@
 {
-  "name": "간단한-카운터-앱",
+  "name": "오디오-파형-분석기",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-dropzone": "^14.3.8",
+    "wavesurfer.js": "^7.11.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

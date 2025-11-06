@@ -3,24 +3,28 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>간단한 카운터 앱</title>
+    <title>오디오 파형 분석기</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
     tailwind.config = {
-      darkMode: 'class', // or 'media'
+      darkMode: 'class',
     }
     </script>
+    <!-- wavesurfer.js CDN 추가 -->
+    <script src="https://unpkg.com/wavesurfer.js@7"></script>
 <script type="importmap">
 {
   "imports": {
     "react": "https://aistudiocdn.com/react@^19.2.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/"
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react-dropzone": "https://aistudiocdn.com/react-dropzone@^14.3.8",
+    "wavesurfer.js": "https://aistudiocdn.com/wavesurfer.js@^7.11.1"
   }
 }
 </script>
 </head>
-<body class="bg-gray-50 dark:bg-gray-900">
+<body class="bg-gray-100 dark:bg-gray-900 transition-colors duration-300">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
 </body>

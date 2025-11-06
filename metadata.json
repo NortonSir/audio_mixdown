@@ -1,5 +1,5 @@
 {
-  "name": "간단한 카운터 앱",
-  "description": "React와 Tailwind CSS로 만든 간단한 카운터 애플리케이션입니다.",
+  "name": "오디오 파형 분석기",
+  "description": "오디오 파일을 업로드하고 파형을 시각적으로 분석하는 애플리케이션입니다.",
   "requestFramePermissions": []
 }
