@@ -13,46 +13,22 @@ import ZoomOutIcon from './icons/ZoomOutIcon';
 import ZoomResetIcon from './icons/ZoomResetIcon';
 import SparklesIcon from './icons/SparklesIcon';
 import UsersIcon from './icons/UsersIcon';
-import MusicNoteIcon from './icons/MusicNoteIcon';
+import DocumentTextIcon from './icons/DocumentTextIcon';
 
 interface AudioVisualizerProps {
   file: File;
   onReset: () => void;
 }
 
-// 파형 스타일 정의
-const waveformStyles = [
-  {
-    name: '모던',
-    config: {
-      waveColor: '#A8B5FE',
-      progressColor: '#6366F1',
-      cursorColor: '#4F46E5',
-      barWidth: 2,
-      barRadius: 2,
-    }
-  },
-  {
-    name: '클래식',
-    config: {
-      waveColor: '#9CA3AF',
-      progressColor: '#10B981',
-      cursorColor: '#059669',
-      barWidth: 1,
-      barRadius: 0,
-    }
-  },
-  {
-    name: '네온',
-    config: {
-      waveColor: '#EC4899',
-      progressColor: '#A855F7',
-      cursorColor: '#FBBF24',
-      barWidth: 3,
-      barRadius: 3,
-    }
-  }
-];
+// 네온 파형 스타일
+const neonWaveformConfig = {
+  waveColor: '#EC4899',
+  progressColor: '#A855F7',
+  cursorColor: '#FBBF24',
+  barWidth: 3,
+  barRadius: 3,
+};
+
 
 const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
   const waveformRef = useRef<HTMLDivElement>(null);
@@ -73,8 +49,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
   const [isAnalyzingSpeakers, setIsAnalyzingSpeakers] = useState(false);
   const [speakerCountResult, setSpeakerCountResult] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [lyricsResult, setLyricsResult] = useState<string | null>(null);
-  const [currentStyle, setCurrentStyle] = useState(waveformStyles[0]);
+  const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
 
 
   const handleResetZoom = useCallback(() => {
@@ -114,7 +89,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
 
     const wavesurfer = WaveSurfer.create({
       container: waveformRef.current,
-      ...currentStyle.config,
+      ...neonWaveformConfig,
       responsive: true,
       height: 130,
       normalize: true,
@@ -186,14 +161,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
       magnifierWavesurfer.destroy();
       URL.revokeObjectURL(audioUrl);
     };
-  }, [file, handleResetZoom, currentStyle]);
-
-  // Effect to update wavesurfer options when style changes without reloading the audio
-  useEffect(() => {
-    if (wavesurferRef.current) {
-      wavesurferRef.current.setOptions(currentStyle.config);
-    }
-  }, [currentStyle]);
+  }, [file, handleResetZoom]);
 
   const handlePlayPause = () => {
     wavesurferRef.current?.playPause();
@@ -340,9 +308,9 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
     }
   };
 
-  const handleTranscribeLyrics = async () => {
+  const handleTranscribe = async () => {
     setIsTranscribing(true);
-    setLyricsResult(null);
+    setTranscriptionResult(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
       const base64Audio = await fileToBase64(file);
@@ -361,11 +329,11 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
         contents: { parts: [audioPart, {text: prompt}] },
       });
 
-      setLyricsResult(response.text);
+      setTranscriptionResult(response.text);
 
     } catch (error) {
       console.error("Error transcribing audio:", error);
-      setLyricsResult('가사 생성에 실패했습니다.');
+      setTranscriptionResult('텍스트 생성에 실패했습니다.');
     } finally {
       setIsTranscribing(false);
     }
@@ -379,7 +347,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
         <p className="text-sm text-gray-500 dark:text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
       </div>
       
-      <div>
+      <div className="mb-6">
         <div 
           className="relative"
           onMouseMove={handleMouseMove}
@@ -415,25 +383,6 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
         </p>
       </div>
 
-      <div className="my-6 flex items-center justify-center gap-6">
-        <span className="text-sm font-medium text-gray-600 dark:text-gray-300">파형 스타일:</span>
-        <div className="flex items-center gap-4">
-            {waveformStyles.map((style) => (
-                <label key={style.name} className="flex items-center space-x-2 cursor-pointer text-sm">
-                    <input
-                        type="radio"
-                        name="waveform-style"
-                        value={style.name}
-                        checked={currentStyle.name === style.name}
-                        onChange={() => setCurrentStyle(style)}
-                        className="form-radio h-4 w-4 text-indigo-600 dark:accent-indigo-500 focus:ring-indigo-500 border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700"
-                    />
-                    <span className="text-gray-700 dark:text-gray-200">{style.name}</span>
-                </label>
-            ))}
-        </div>
-      </div>
-
       <div className="mt-6 p-4 rounded-lg bg-gray-50 dark:bg-gray-700/50">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center space-x-2">
@@ -464,13 +413,13 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
               <span>{isAnalyzingSpeakers ? '분석 중...' : '화자 구분하기'}</span>
             </button>
              <button
-              onClick={handleTranscribeLyrics}
+              onClick={handleTranscribe}
               disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading}
               className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-purple-600 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/50 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-label="가사 생성하기"
+              aria-label="텍스트생성"
             >
-              <MusicNoteIcon className="w-5 h-5"/>
-              <span>{isTranscribing ? '생성 중...' : '가사 생성하기'}</span>
+              <DocumentTextIcon className="w-5 h-5"/>
+              <span>{isTranscribing ? '생성 중...' : '텍스트생성'}</span>
             </button>
           </div>
           
@@ -539,7 +488,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
           </div>
         </div>
       </div>
-      {(genderResult || speakerCountResult || lyricsResult) && (
+      {(genderResult || speakerCountResult || transcriptionResult) && (
         <div className="mt-6 p-6 rounded-lg bg-gray-50 dark:bg-gray-700/50">
           <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4">AI 분석 결과</h3>
           <div className="space-y-4">
@@ -555,10 +504,10 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
                 <p className="text-teal-500 dark:text-teal-400 font-medium">{speakerCountResult}</p>
               </div>
             )}
-            {lyricsResult && (
+            {transcriptionResult && (
               <div>
-                <h4 className="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-2">가사 내용</h4>
-                <pre className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-sans bg-white dark:bg-gray-800 p-4 rounded-md shadow-inner max-h-60 overflow-y-auto">{lyricsResult}</pre>
+                <h4 className="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-2">텍스트 변환 내용</h4>
+                <pre className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-sans bg-white dark:bg-gray-800 p-4 rounded-md shadow-inner max-h-60 overflow-y-auto">{transcriptionResult}</pre>
               </div>
             )}
           </div>
