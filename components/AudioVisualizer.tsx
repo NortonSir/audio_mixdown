@@ -13,6 +13,7 @@ import ZoomOutIcon from './icons/ZoomOutIcon';
 import ZoomResetIcon from './icons/ZoomResetIcon';
 import SparklesIcon from './icons/SparklesIcon';
 import UsersIcon from './icons/UsersIcon';
+import MusicNoteIcon from './icons/MusicNoteIcon';
 
 interface AudioVisualizerProps {
   file: File;
@@ -71,6 +72,8 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
   const [genderResult, setGenderResult] = useState<string | null>(null);
   const [isAnalyzingSpeakers, setIsAnalyzingSpeakers] = useState(false);
   const [speakerCountResult, setSpeakerCountResult] = useState<string | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [lyricsResult, setLyricsResult] = useState<string | null>(null);
   const [currentStyle, setCurrentStyle] = useState(waveformStyles[0]);
 
 
@@ -337,24 +340,43 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
     }
   };
 
+  const handleTranscribeLyrics = async () => {
+    setIsTranscribing(true);
+    setLyricsResult(null);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+      const base64Audio = await fileToBase64(file);
+
+      const audioPart = {
+        inlineData: {
+          mimeType: file.type,
+          data: base64Audio,
+        },
+      };
+      
+      const prompt = "이 오디오 파일의 음성을 텍스트로 변환해주세요. 만약 노래라면 가사 형식으로 작성해주세요.";
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: { parts: [audioPart, {text: prompt}] },
+      });
+
+      setLyricsResult(response.text);
+
+    } catch (error) {
+      console.error("Error transcribing audio:", error);
+      setLyricsResult('가사 생성에 실패했습니다.');
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
 
   return (
     <div className="p-8">
       <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-700/50 mb-6">
         <h2 className="text-xl font-bold text-gray-800 dark:text-white truncate" title={file.name}>{file.name}</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-        <div className="mt-2 space-y-1">
-            {genderResult && (
-                <p className="text-sm text-gray-800 dark:text-gray-200 font-semibold">
-                    예상 성별: <span className="text-indigo-500 dark:text-indigo-400">{genderResult}</span>
-                </p>
-            )}
-             {speakerCountResult && (
-                <p className="text-sm text-gray-800 dark:text-gray-200 font-semibold">
-                    예상 화자 수: <span className="text-teal-500 dark:text-teal-400">{speakerCountResult}</span>
-                </p>
-            )}
-        </div>
       </div>
       
       <div>
@@ -425,7 +447,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
             </button>
             <button
               onClick={handleAnalyzeGender}
-              disabled={isAnalyzingGender || isAnalyzingSpeakers || isLoading}
+              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading}
               className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg hover:bg-indigo-200 dark:hover:bg-indigo-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="성별 분석하기"
             >
@@ -434,12 +456,21 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
             </button>
             <button
               onClick={handleAnalyzeSpeakers}
-              disabled={isAnalyzingGender || isAnalyzingSpeakers || isLoading}
+              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading}
               className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-teal-600 dark:text-teal-300 bg-teal-100 dark:bg-teal-900/50 rounded-lg hover:bg-teal-200 dark:hover:bg-teal-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="화자 구분하기"
             >
               <UsersIcon className="w-5 h-5"/>
               <span>{isAnalyzingSpeakers ? '분석 중...' : '화자 구분하기'}</span>
+            </button>
+             <button
+              onClick={handleTranscribeLyrics}
+              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading}
+              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-purple-600 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/50 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="가사 생성하기"
+            >
+              <MusicNoteIcon className="w-5 h-5"/>
+              <span>{isTranscribing ? '생성 중...' : '가사 생성하기'}</span>
             </button>
           </div>
           
@@ -508,6 +539,31 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
           </div>
         </div>
       </div>
+      {(genderResult || speakerCountResult || lyricsResult) && (
+        <div className="mt-6 p-6 rounded-lg bg-gray-50 dark:bg-gray-700/50">
+          <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4">AI 분석 결과</h3>
+          <div className="space-y-4">
+            {genderResult && (
+              <div>
+                <h4 className="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-1">예상 성별</h4>
+                <p className="text-indigo-500 dark:text-indigo-400 font-medium">{genderResult}</p>
+              </div>
+            )}
+            {speakerCountResult && (
+              <div>
+                <h4 className="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-1">예상 화자 수</h4>
+                <p className="text-teal-500 dark:text-teal-400 font-medium">{speakerCountResult}</p>
+              </div>
+            )}
+            {lyricsResult && (
+              <div>
+                <h4 className="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-2">가사 내용</h4>
+                <pre className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-sans bg-white dark:bg-gray-800 p-4 rounded-md shadow-inner max-h-60 overflow-y-auto">{lyricsResult}</pre>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
