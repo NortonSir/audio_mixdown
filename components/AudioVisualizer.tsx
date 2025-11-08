@@ -20,6 +20,7 @@ import DocumentTextIcon from './icons/DocumentTextIcon';
 import ScissorsIcon from './icons/ScissorsIcon';
 import XCircleIcon from './icons/XCircleIcon';
 import Bars3BottomLeftIcon from './icons/Bars3BottomLeftIcon';
+import SelectionIcon from './icons/SelectionIcon';
 
 
 interface AudioVisualizerProps {
@@ -116,6 +117,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
   const wsRegionsRef = useRef<RegionsPlugin | null>(null);
   const initialZoomRef = useRef<number | null>(null);
   const currentZoomRef = useRef<number | null>(null);
+  const disableDragSelectionRef = useRef<(() => void) | null>(null);
 
   const [currentAudioFile, setCurrentAudioFile] = useState<File>(file);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -127,6 +129,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
   const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
   const [isTrimming, setIsTrimming] = useState(false);
   const [isSplitting, setIsSplitting] = useState(false);
+  const [isRegionSelectionEnabled, setIsRegionSelectionEnabled] = useState(false);
 
   const [isAnalyzingGender, setIsAnalyzingGender] = useState(false);
   const [genderResult, setGenderResult] = useState<string | null>(null);
@@ -184,6 +187,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
     setGenderResult(null);
     setSpeakerCountResult(null);
     setTranscriptionResult(null);
+    setIsRegionSelectionEnabled(false); // Reset selection mode on new file
 
     const audioUrl = URL.createObjectURL(currentAudioFile);
 
@@ -197,9 +201,8 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
       normalize: true,
       url: audioUrl,
       interact: true,
-      // dragToSeek must be false to enable region selection by dragging.
-      // Click to seek is still enabled.
-      dragToSeek: false,
+      // Default to drag to seek. Region selection is toggled via a button.
+      dragToSeek: true,
       plugins: [wsRegionsRef.current],
     });
     wavesurferRef.current = wavesurfer;
@@ -243,6 +246,25 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
       URL.revokeObjectURL(audioUrl);
     };
   }, [currentAudioFile, handleResetZoom, volume, manualRegionCreateHandler]);
+
+  useEffect(() => {
+    if (!wavesurferRef.current || !wsRegionsRef.current) return;
+
+    wavesurferRef.current.setOptions({ dragToSeek: !isRegionSelectionEnabled });
+
+    // Clean up previous drag selection listeners if they exist
+    if (disableDragSelectionRef.current) {
+        disableDragSelectionRef.current();
+        disableDragSelectionRef.current = null;
+    }
+
+    if (isRegionSelectionEnabled) {
+      // When enabling, we store the cleanup function
+      disableDragSelectionRef.current = wsRegionsRef.current.enableDragSelection({
+        color: 'rgba(168, 85, 247, 0.4)',
+      });
+    }
+  }, [isRegionSelectionEnabled]);
 
   const handlePlayPause = () => {
     wavesurferRef.current?.playPause();
@@ -567,7 +589,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
         )}
 
         <p className="text-xs text-center text-gray-400 dark:text-gray-500 mt-2">
-          팁: 파형 위에서 드래그하여 영역을 선택하고 자를 수 있습니다.
+          팁: {isRegionSelectionEnabled ? '파형을 드래그하여 구간을 선택하세요. 타임라인을 이동하려면 버튼을 다시 누르세요.' : '타임라인을 드래그하여 이동할 수 있습니다. 구간을 선택하려면 \'영역 선택\' 버튼을 누르세요.'}
         </p>
       </div>
 
@@ -583,6 +605,20 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
               <span>다른 파일</span>
             </button>
             <div className="flex items-center border-l border-gray-200 dark:border-gray-600 ml-2 pl-2 space-x-1">
+                <button
+                    onClick={() => setIsRegionSelectionEnabled(prev => !prev)}
+                    className={`flex items-center space-x-2 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
+                        isRegionSelectionEnabled
+                        ? 'text-purple-800 bg-purple-200 dark:text-purple-100 dark:bg-purple-700 ring-2 ring-purple-500'
+                        : 'text-purple-600 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/50 hover:bg-purple-200 dark:hover:bg-purple-900'
+                    }`}
+                    disabled={isLoading || isTrimming || isSplitting}
+                    aria-pressed={isRegionSelectionEnabled}
+                    title="영역 선택 모드 토글"
+                >
+                    <SelectionIcon className="w-5 h-5"/>
+                    <span className="hidden sm:inline">영역 선택</span>
+                </button>
                  <button
                     onClick={handleTrim}
                     disabled={!selectedRegion || isTrimming || isLoading || isSplitting}
