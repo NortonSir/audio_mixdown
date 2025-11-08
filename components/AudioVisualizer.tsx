@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
+import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.js';
+import type { Region } from 'wavesurfer.js/dist/plugins/regions.js';
 import { GoogleGenAI } from "@google/genai";
+
 import PlayIcon from './icons/PlayIcon';
 import PauseIcon from './icons/PauseIcon';
 import ResetIcon from './icons/ResetIcon';
@@ -14,36 +17,117 @@ import ZoomResetIcon from './icons/ZoomResetIcon';
 import SparklesIcon from './icons/SparklesIcon';
 import UsersIcon from './icons/UsersIcon';
 import DocumentTextIcon from './icons/DocumentTextIcon';
+import ScissorsIcon from './icons/ScissorsIcon';
+import XCircleIcon from './icons/XCircleIcon';
+import Bars3BottomLeftIcon from './icons/Bars3BottomLeftIcon';
+
 
 interface AudioVisualizerProps {
   file: File;
   onReset: () => void;
 }
 
-// 네온 파형 스타일
-const neonWaveformConfig = {
-  waveColor: '#EC4899',
-  progressColor: '#A855F7',
+// 모던 파형 스타일
+const waveformConfig = {
+  waveColor: 'rgb(148, 163, 184)', // slate-400
+  progressColor: 'rgb(71, 85, 105)', // slate-600
   cursorColor: '#FBBF24',
   barWidth: 3,
   barRadius: 3,
+};
+
+const formatTime = (time: number) => {
+  const minutes = Math.floor(time / 60);
+  const seconds = Math.floor(time % 60);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(Math.floor((time % 1) * 100)).padStart(2, '0')}`;
+};
+
+// A helper function to convert AudioBuffer to a WAV Blob
+const audioBufferToWav = (buffer: AudioBuffer): Blob => {
+  const numOfChan = buffer.numberOfChannels;
+  const length = buffer.length * numOfChan * 2 + 44;
+  const bufferArray = new ArrayBuffer(length);
+  const view = new DataView(bufferArray);
+  const channels = [];
+  let i;
+  let sample;
+  let offset = 0;
+  let pos = 0;
+
+  // write WAVE header
+  // "RIFF"
+  setUint32(0x46464952);
+  // file length - 8
+  setUint32(length - 8);
+  // "WAVE"
+  setUint32(0x45564157);
+  // "fmt " chunk
+  setUint32(0x20746d66);
+  // length = 16
+  setUint32(16);
+  // PCM (uncompressed)
+  setUint16(1);
+  setUint16(numOfChan);
+  setUint32(buffer.sampleRate);
+  // avg. bytes/sec
+  setUint32(buffer.sampleRate * 2 * numOfChan);
+  // block-align
+  setUint16(numOfChan * 2);
+  // 16-bit
+  setUint16(16);
+  // "data" - chunk
+  setUint32(0x61746164);
+  // chunk length
+  setUint32(length - pos - 4);
+
+  function setUint16(data: number) {
+    view.setUint16(pos, data, true);
+    pos += 2;
+  }
+
+  function setUint32(data: number) {
+    view.setUint32(pos, data, true);
+    pos += 4;
+  }
+
+  // write interleaved data
+  for (i = 0; i < buffer.numberOfChannels; i++) {
+    channels.push(buffer.getChannelData(i));
+  }
+
+  while (pos < length) {
+    for (i = 0; i < numOfChan; i++) {
+      // interleave channels
+      sample = Math.max(-1, Math.min(1, channels[i][offset])); // clamp
+      sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0; // scale to 16-bit signed int
+      view.setInt16(pos, sample, true); // write 16-bit sample
+      pos += 2;
+    }
+    offset++; // next source sample
+  }
+  
+  return new Blob([view], { type: "audio/wav" });
 };
 
 
 const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
-  const magnifierContainerRef = useRef<HTMLDivElement>(null);
-  const magnifierWaveformRef = useRef<HTMLDivElement>(null);
-  const magnifierWavesurferRef = useRef<WaveSurfer | null>(null);
+  const wsRegionsRef = useRef<RegionsPlugin | null>(null);
   const initialZoomRef = useRef<number | null>(null);
   const currentZoomRef = useRef<number | null>(null);
+
+  const [currentAudioFile, setCurrentAudioFile] = useState<File>(file);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentTime, setCurrentTime] = useState('00:00');
-  const [duration, setDuration] = useState('00:00');
+  const [currentTime, setCurrentTime] = useState('00:00.00');
+  const [duration, setDuration] = useState('00:00.00');
   const [volume, setVolume] = useState(0.8);
   const [lastVolume, setLastVolume] = useState(0.8);
+  const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
+  const [isTrimming, setIsTrimming] = useState(false);
+  const [isSplitting, setIsSplitting] = useState(false);
+
   const [isAnalyzingGender, setIsAnalyzingGender] = useState(false);
   const [genderResult, setGenderResult] = useState<string | null>(null);
   const [isAnalyzingSpeakers, setIsAnalyzingSpeakers] = useState(false);
@@ -56,7 +140,6 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
     if (initialZoomRef.current && wavesurferRef.current) {
         wavesurferRef.current.zoom(initialZoomRef.current);
         currentZoomRef.current = initialZoomRef.current;
-        magnifierWavesurferRef.current?.zoom(initialZoomRef.current);
     }
   }, []);
 
@@ -65,7 +148,6 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
         const newZoom = currentZoomRef.current * 1.2;
         wavesurferRef.current.zoom(newZoom);
         currentZoomRef.current = newZoom;
-        magnifierWavesurferRef.current?.zoom(newZoom);
     }
   }, []);
   
@@ -77,56 +159,51 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
           } else {
               wavesurferRef.current.zoom(newZoom);
               currentZoomRef.current = newZoom;
-              magnifierWavesurferRef.current?.zoom(newZoom);
           }
       }
   }, [handleResetZoom]);
+  
+  const manualRegionCreateHandler = useCallback((region: Region) => {
+    // Manually created regions are given a specific color for visibility.
+    region.color = 'rgba(168, 85, 247, 0.4)'; // A semi-transparent purple.
+    if (wsRegionsRef.current) {
+      wsRegionsRef.current.getRegions().forEach((r) => {
+        if (r.id !== region.id) {
+          r.remove();
+        }
+      });
+    }
+    setSelectedRegion(region);
+  }, []);
 
   useEffect(() => {
-    if (!waveformRef.current || !magnifierWaveformRef.current) return;
+    if (!waveformRef.current) return;
 
-    const audioUrl = URL.createObjectURL(file);
+    setIsLoading(true);
+    setSelectedRegion(null);
+    setGenderResult(null);
+    setSpeakerCountResult(null);
+    setTranscriptionResult(null);
+
+    const audioUrl = URL.createObjectURL(currentAudioFile);
+
+    wsRegionsRef.current = RegionsPlugin.create();
 
     const wavesurfer = WaveSurfer.create({
       container: waveformRef.current,
-      ...neonWaveformConfig,
+      ...waveformConfig,
       responsive: true,
       height: 130,
       normalize: true,
       url: audioUrl,
       interact: true,
-      dragToSeek: true,
+      // dragToSeek must be false to enable region selection by dragging.
+      // Click to seek is still enabled.
+      dragToSeek: false,
+      plugins: [wsRegionsRef.current],
     });
     wavesurferRef.current = wavesurfer;
     wavesurfer.setVolume(volume);
-
-    const magnifierWavesurfer = WaveSurfer.create({
-        container: magnifierWaveformRef.current,
-        waveColor: '#CBD5E1', // Magnifier has a fixed color for clarity
-        progressColor: '#818CF8', // Magnifier has a fixed color for clarity
-        cursorWidth: 0,
-        responsive: true,
-        height: 400, // 400% vertical zoom
-        url: audioUrl,
-        interact: false,
-        hideScrollbar: true,
-    });
-    magnifierWavesurferRef.current = magnifierWavesurfer;
-
-
-    const formatTime = (time: number) => {
-      const minutes = Math.floor(time / 60);
-      const seconds = Math.floor(time % 60);
-      return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    };
-
-    let mainReady = false;
-    let magnifierReady = false;
-    const setInitialMagnifierZoom = () => {
-        if(mainReady && magnifierReady && initialZoomRef.current && magnifierWavesurferRef.current) {
-            magnifierWavesurferRef.current.zoom(initialZoomRef.current);
-        }
-    };
 
     wavesurfer.on('ready', () => {
       setIsLoading(false);
@@ -136,32 +213,36 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
         initialZoomRef.current = initialZoom;
         currentZoomRef.current = initialZoom;
       }
-      mainReady = true;
-      setInitialMagnifierZoom();
     });
     
-    magnifierWavesurfer.on('ready', () => {
-        magnifierReady = true;
-        setInitialMagnifierZoom();
-    });
-
     wavesurfer.on('play', () => setIsPlaying(true));
     wavesurfer.on('pause', () => setIsPlaying(false));
-    wavesurfer.on('audioprocess', (time) => setCurrentTime(formatTime(time)));
+    wavesurfer.on('timeupdate', (time) => setCurrentTime(formatTime(time)));
     wavesurfer.on('finish', () => {
       setIsPlaying(false);
       wavesurfer.seekTo(0);
       setCurrentTime(formatTime(0));
     });
-
     wavesurfer.on('dblclick', handleResetZoom);
+
+    // Regions plugin events
+    wsRegionsRef.current.on('region-created', manualRegionCreateHandler);
+    wsRegionsRef.current.on('region-updated', (region) => {
+        setSelectedRegion(region);
+    });
+    wsRegionsRef.current.on('region-removed', () => {
+        setSelectedRegion(null);
+    });
+    wsRegionsRef.current.on('region-clicked', (region, e) => {
+      e.stopPropagation()
+      region.play()
+    })
     
     return () => {
       wavesurfer.destroy();
-      magnifierWavesurfer.destroy();
       URL.revokeObjectURL(audioUrl);
     };
-  }, [file, handleResetZoom]);
+  }, [currentAudioFile, handleResetZoom, volume, manualRegionCreateHandler]);
 
   const handlePlayPause = () => {
     wavesurferRef.current?.playPause();
@@ -192,52 +273,58 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
     return <VolumeHighIcon {...iconProps} />;
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const mainWaveformEl = waveformRef.current;
-    const magnifierContainerEl = magnifierContainerRef.current;
+  const handleClearSelection = () => {
+    if (selectedRegion) {
+        selectedRegion.remove();
+    }
+  };
+
+  const handleTrim = async () => {
+    if (!selectedRegion || !wavesurferRef.current) return;
     
-    if (isLoading || !wavesurferRef.current || !magnifierWavesurferRef.current || !mainWaveformEl || !magnifierContainerEl) return;
+    setIsTrimming(true);
 
-    const bounds = mainWaveformEl.getBoundingClientRect();
-    const mouseX = e.clientX - bounds.left;
-    const mouseY = e.clientY - bounds.top;
-
-    const waveformHeight = bounds.height;
-    const verticalCenter = waveformHeight / 2;
-    const activationThreshold = 30; // 30px
-
-    if (
-        mouseX < 0 || 
-        mouseX > bounds.width ||
-        mouseY < (verticalCenter - activationThreshold) ||
-        mouseY > (verticalCenter + activationThreshold)
-    ) {
-        magnifierContainerEl.style.display = 'none';
+    const originalBuffer = wavesurferRef.current.getDecodedData();
+    if (!originalBuffer) {
+        setIsTrimming(false);
         return;
     }
-    
-    const progress = mouseX / bounds.width;
-    
-    const magnifierWidth = magnifierContainerEl.offsetWidth;
-    let left = mouseX - magnifierWidth / 2;
-    left = Math.max(0, Math.min(bounds.width - magnifierWidth, left));
 
-    magnifierContainerEl.style.left = `${left}px`;
-    magnifierContainerEl.style.display = 'block';
+    const start = selectedRegion.start;
+    const end = selectedRegion.end;
+    const { sampleRate, numberOfChannels } = originalBuffer;
 
-    magnifierWavesurferRef.current.seekTo(progress);
+    const startOffset = Math.round(start * sampleRate);
+    const endOffset = Math.round(end * sampleRate);
+    const frameCount = endOffset - startOffset;
+
+    if (frameCount <= 0) {
+        setIsTrimming(false);
+        return;
+    }
+
+    // Use a temporary AudioContext for processing
+    // FIX: Cast window to 'any' to access vendor-prefixed 'webkitAudioContext' without TypeScript errors.
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const newBuffer = audioContext.createBuffer(numberOfChannels, frameCount, sampleRate);
+
+    for (let i = 0; i < numberOfChannels; i++) {
+        const channelData = originalBuffer.getChannelData(i);
+        const newChannelData = newBuffer.getChannelData(i);
+        newChannelData.set(channelData.subarray(startOffset, endOffset));
+    }
+
+    const wavBlob = audioBufferToWav(newBuffer);
+    const trimmedFile = new File([wavBlob], `trimmed_${currentAudioFile.name}.wav`, { type: 'audio/wav' });
+    
+    setCurrentAudioFile(trimmedFile);
+    setIsTrimming(false);
   };
 
-  const handleMouseLeave = () => {
-      if (magnifierContainerRef.current) {
-          magnifierContainerRef.current.style.display = 'none';
-      }
-  };
-
-  const fileToBase64 = (file: File): Promise<string> => {
+  const fileToBase64 = (fileToConvert: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(fileToConvert);
       reader.onload = () => {
         const result = reader.result as string;
         resolve(result.split(',')[1]);
@@ -251,11 +338,11 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
     setGenderResult(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-      const base64Audio = await fileToBase64(file);
+      const base64Audio = await fileToBase64(currentAudioFile);
 
       const audioPart = {
         inlineData: {
-          mimeType: file.type,
+          mimeType: currentAudioFile.type,
           data: base64Audio,
         },
       };
@@ -282,11 +369,11 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
     setSpeakerCountResult(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-      const base64Audio = await fileToBase64(file);
+      const base64Audio = await fileToBase64(currentAudioFile);
 
       const audioPart = {
         inlineData: {
-          mimeType: file.type,
+          mimeType: currentAudioFile.type,
           data: base64Audio,
         },
       };
@@ -313,11 +400,11 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
     setTranscriptionResult(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-      const base64Audio = await fileToBase64(file);
+      const base64Audio = await fileToBase64(currentAudioFile);
 
       const audioPart = {
         inlineData: {
-          mimeType: file.type,
+          mimeType: currentAudioFile.type,
           data: base64Audio,
         },
       };
@@ -339,47 +426,148 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
     }
   };
 
+  const handleDetectSilenceAndSplit = async () => {
+    if (!wavesurferRef.current || !wsRegionsRef.current) return;
+    setIsSplitting(true);
+    // Clear previous results and selections
+    setGenderResult(null);
+    setSpeakerCountResult(null);
+    setTranscriptionResult(null);
+    wsRegionsRef.current.clearRegions();
+    setSelectedRegion(null);
+
+    try {
+        await new Promise(resolve => setTimeout(resolve, 10)); // Yield to allow UI update
+
+        const audioBuffer = wavesurferRef.current.getDecodedData();
+        if (!audioBuffer) {
+            console.error("Could not get audio buffer");
+            return;
+        }
+
+        const sampleRate = audioBuffer.sampleRate;
+        // Use the first channel for silence detection
+        const channelData = audioBuffer.getChannelData(0); 
+
+        const SILENCE_THRESHOLD = 0.02; // -34dBFS, a reasonable starting point
+        const MIN_SILENCE_DURATION_S = 0.4; // 400ms of silence
+        const MIN_SEGMENT_DURATION_S = 0.2; // 200ms minimum segment length
+        const MERGE_GAP_S = 0.15; // Merge segments separated by less than 150ms
+
+        const minSilenceSamples = Math.floor(MIN_SILENCE_DURATION_S * sampleRate);
+        const minSegmentSamples = Math.floor(MIN_SEGMENT_DURATION_S * sampleRate);
+        
+        let silentRegions = [];
+        let silenceStart = -1;
+        
+        // 1. Find all silent regions that are long enough
+        for (let i = 0; i < channelData.length; i++) {
+            if (Math.abs(channelData[i]) < SILENCE_THRESHOLD) {
+                if (silenceStart === -1) {
+                    silenceStart = i;
+                }
+            } else {
+                if (silenceStart !== -1) {
+                    if (i - silenceStart >= minSilenceSamples) {
+                        silentRegions.push({ start: silenceStart, end: i });
+                    }
+                    silenceStart = -1;
+                }
+            }
+        }
+        if (silenceStart !== -1 && (channelData.length - silenceStart) >= minSilenceSamples) {
+            silentRegions.push({ start: silenceStart, end: channelData.length });
+        }
+        
+        // 2. Derive sound segments from the gaps between silent regions
+        let soundSegments = [];
+        let lastEnd = 0;
+        silentRegions.forEach(silentRegion => {
+            const start = lastEnd;
+            const end = silentRegion.start;
+            if (end - start > minSegmentSamples) {
+                soundSegments.push({ start: start / sampleRate, end: end / sampleRate });
+            }
+            lastEnd = silentRegion.end;
+        });
+        
+        if (channelData.length - lastEnd > minSegmentSamples) {
+             soundSegments.push({ start: lastEnd / sampleRate, end: channelData.length / sampleRate });
+        }
+
+        // 3. Merge segments that are very close to each other
+        if (soundSegments.length > 1) {
+            const mergedSegments = [soundSegments[0]];
+            for (let i = 1; i < soundSegments.length; i++) {
+                const lastMerged = mergedSegments[mergedSegments.length - 1];
+                const current = soundSegments[i];
+                if (current.start - lastMerged.end < MERGE_GAP_S) {
+                    lastMerged.end = current.end; // merge by extending the previous segment
+                } else {
+                    mergedSegments.push(current);
+                }
+            }
+            soundSegments = mergedSegments;
+        }
+
+        // 4. Add regions to wavesurfer for visualization
+        if (wsRegionsRef.current) {
+            wsRegionsRef.current.un('region-created', manualRegionCreateHandler);
+            const colors = [
+                'rgba(250, 204, 21, 0.3)', // amber
+                'rgba(59, 130, 246, 0.3)', // blue
+                'rgba(16, 185, 129, 0.3)', // emerald
+                'rgba(239, 68, 68, 0.3)', // red
+                'rgba(139, 92, 246, 0.3)', // violet
+            ];
+
+            soundSegments.forEach((segment, index) => {
+                wsRegionsRef.current?.addRegion({
+                    start: segment.start,
+                    end: segment.end,
+                    color: colors[index % colors.length],
+                    drag: false,
+                    resize: true,
+                    content: `구간 ${index + 1}`
+                });
+            });
+            wsRegionsRef.current.on('region-created', manualRegionCreateHandler);
+        }
+
+    } catch (error) {
+        console.error("Error splitting audio by silence:", error);
+    } finally {
+        setIsSplitting(false);
+    }
+  };
+
 
   return (
     <div className="p-8">
       <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-700/50 mb-6">
-        <h2 className="text-xl font-bold text-gray-800 dark:text-white truncate" title={file.name}>{file.name}</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+        <h2 className="text-xl font-bold text-gray-800 dark:text-white truncate" title={currentAudioFile.name}>{currentAudioFile.name}</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400">{(currentAudioFile.size / 1024 / 1024).toFixed(2)} MB</p>
       </div>
       
-      <div className="mb-6">
-        <div 
-          className="relative"
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
-        >
-          {/* Magnifier View */}
-          <div
-              ref={magnifierContainerRef}
-              className="absolute top-[-110px] h-[100px] w-[200px] bg-white dark:bg-gray-800 border-2 border-indigo-400 rounded-lg shadow-lg z-20 pointer-events-none overflow-hidden hidden"
-          >
-              <div 
-                ref={magnifierWaveformRef} 
-                className="w-full absolute"
-                style={{ height: '400px', top: '-150px' }}
-              ></div>
-              {/* Center line indicator */}
-              <div className="absolute top-0 left-1/2 w-px h-full bg-red-500 z-10 -translate-x-1/2"></div>
-              {/* Horizontal center line (baseline) */}
-              <div className="absolute left-0 top-1/2 w-full h-px bg-gray-400 dark:bg-gray-500 z-10 -translate-y-1/2"></div>
-          </div>
-
-          <div ref={waveformRef} className="w-full h-[130px] relative cursor-pointer">
-              {isLoading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-100/50 dark:bg-gray-700/50 rounded-lg">
-                      <p className="text-gray-500 dark:text-gray-400">파형 분석 중...</p>
+      <div className="mb-2">
+        <div className="relative">
+          <div ref={waveformRef} className="w-full h-[130px] relative">
+              {(isLoading || isTrimming || isSplitting) && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-100/50 dark:bg-gray-700/50 rounded-lg z-30">
+                      <p className="text-gray-500 dark:text-gray-400">{isTrimming ? '오디오 자르는 중...' : isSplitting ? '자동으로 구간 나누는 중...' : '파형 분석 중...'}</p>
                   </div>
               )}
           </div>
         </div>
+        
+        {selectedRegion && (
+            <div className="text-center text-sm text-gray-600 dark:text-gray-400 mt-2 font-mono">
+                선택 영역: {formatTime(selectedRegion.start)} &mdash; {formatTime(selectedRegion.end)}
+            </div>
+        )}
 
         <p className="text-xs text-center text-gray-400 dark:text-gray-500 mt-2">
-          팁: 파형 중앙에 마우스를 올리면 돋보기 기능이 활성화됩니다.
+          팁: 파형 위에서 드래그하여 영역을 선택하고 자를 수 있습니다.
         </p>
       </div>
 
@@ -388,52 +576,85 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
           <div className="flex items-center space-x-2">
             <button
               onClick={onReset}
-              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
               aria-label="다른 파일 업로드"
             >
               <ResetIcon className="w-5 h-5"/>
               <span>다른 파일</span>
             </button>
+            <div className="flex items-center border-l border-gray-200 dark:border-gray-600 ml-2 pl-2 space-x-1">
+                 <button
+                    onClick={handleTrim}
+                    disabled={!selectedRegion || isTrimming || isLoading || isSplitting}
+                    className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-pink-600 dark:text-pink-300 bg-pink-100 dark:bg-pink-900/50 rounded-lg hover:bg-pink-200 dark:hover:bg-pink-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="선택 영역 자르기"
+                    title="선택 영역 자르기"
+                >
+                    <ScissorsIcon className="w-5 h-5"/>
+                    <span className="hidden sm:inline">자르기</span>
+                </button>
+                {selectedRegion && (
+                    <button
+                        onClick={handleClearSelection}
+                        className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full transition-colors"
+                        aria-label="선택 해제"
+                        title="선택 해제"
+                    >
+                        <XCircleIcon className="w-5 h-5"/>
+                    </button>
+                )}
+            </div>
+          </div>
+           <div className="flex items-center space-x-2">
             <button
               onClick={handleAnalyzeGender}
-              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading}
-              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg hover:bg-indigo-200 dark:hover:bg-indigo-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading || isTrimming || isSplitting}
+              className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg hover:bg-indigo-200 dark:hover:bg-indigo-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="성별 분석하기"
             >
               <SparklesIcon className="w-5 h-5"/>
-              <span>{isAnalyzingGender ? '분석 중...' : '성별 분석하기'}</span>
+              <span>{isAnalyzingGender ? '분석 중...' : '성별'}</span>
             </button>
             <button
               onClick={handleAnalyzeSpeakers}
-              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading}
-              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-teal-600 dark:text-teal-300 bg-teal-100 dark:bg-teal-900/50 rounded-lg hover:bg-teal-200 dark:hover:bg-teal-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading || isTrimming || isSplitting}
+              className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-teal-600 dark:text-teal-300 bg-teal-100 dark:bg-teal-900/50 rounded-lg hover:bg-teal-200 dark:hover:bg-teal-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="화자 구분하기"
             >
               <UsersIcon className="w-5 h-5"/>
-              <span>{isAnalyzingSpeakers ? '분석 중...' : '화자 구분하기'}</span>
+              <span>{isAnalyzingSpeakers ? '분석 중...' : '화자'}</span>
             </button>
              <button
               onClick={handleTranscribe}
-              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading}
-              className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-purple-600 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/50 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading || isTrimming || isSplitting}
+              className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-purple-600 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/50 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="텍스트생성"
             >
               <DocumentTextIcon className="w-5 h-5"/>
-              <span>{isTranscribing ? '생성 중...' : '텍스트생성'}</span>
+              <span>{isTranscribing ? '생성 중...' : '텍스트'}</span>
+            </button>
+            <button
+              onClick={handleDetectSilenceAndSplit}
+              disabled={isAnalyzingGender || isAnalyzingSpeakers || isTranscribing || isLoading || isTrimming || isSplitting}
+              className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-orange-600 dark:text-orange-300 bg-orange-100 dark:bg-orange-900/50 rounded-lg hover:bg-orange-200 dark:hover:bg-orange-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="자동 구간 나누기"
+            >
+              <Bars3BottomLeftIcon className="w-5 h-5"/>
+              <span>{isSplitting ? '분석 중...' : '구간 나누기'}</span>
             </button>
           </div>
           
           <div className="flex items-center space-x-4">
-            <span className="text-sm font-mono text-gray-500 dark:text-gray-400 w-12 text-center">{currentTime}</span>
+            <span className="text-sm font-mono text-gray-500 dark:text-gray-400 w-20 text-center">{currentTime}</span>
             <button
               onClick={handlePlayPause}
-              disabled={isLoading}
+              disabled={isLoading || isTrimming || isSplitting}
               className="w-14 h-14 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-300 dark:disabled:bg-indigo-800 disabled:cursor-not-allowed transition-all duration-200 shadow-lg"
               aria-label={isPlaying ? '일시정지' : '재생'}
             >
               {isPlaying ? <PauseIcon className="w-8 h-8"/> : <PlayIcon className="w-8 h-8"/>}
             </button>
-            <span className="text-sm font-mono text-gray-500 dark:text-gray-400 w-12 text-center">{duration}</span>
+            <span className="text-sm font-mono text-gray-500 dark:text-gray-400 w-20 text-center">{duration}</span>
           </div>
           
           <div className="flex items-center space-x-4">
@@ -444,7 +665,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
                   onClick={handleZoomOut}
                   className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="축소"
-                  disabled={isLoading}
+                  disabled={isLoading || isTrimming || isSplitting}
                 >
                   <ZoomOutIcon className="w-5 h-5" />
                 </button>
@@ -452,7 +673,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
                   onClick={handleZoomIn}
                   className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="확대"
-                  disabled={isLoading}
+                  disabled={isLoading || isTrimming || isSplitting}
                 >
                   <ZoomInIcon className="w-5 h-5" />
                 </button>
@@ -460,7 +681,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
                   onClick={handleResetZoom}
                   className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="줌 초기화"
-                  disabled={isLoading}
+                  disabled={isLoading || isTrimming || isSplitting}
                 >
                   <ZoomResetIcon className="w-5 h-5" />
                 </button>
