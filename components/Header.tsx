@@ -1,5 +1,5 @@
 import React from 'react';
-import WaveformIcon from './icons/WaveformIcon';
+import { WaveformIcon } from './icons';
 
 const Header: React.FC = () => {
   // Mock user data

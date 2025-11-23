@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import UploadIcon from './icons/UploadIcon';
+import { UploadIcon } from './icons';
 
 interface AudioUploaderProps {
   onFileSelect: (file: File) => void;
