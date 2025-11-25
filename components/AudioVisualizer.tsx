@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { analyzeGender, transcribeAudio } from '../src/services/geminiService';
+import { analyzeGender, transcribeAudio, isAiConfigured } from '../src/services/geminiService';
 
 import AnalysisResults from './AudioVisualizer/AnalysisResults';
 import PlaybackControls from './AudioVisualizer/PlaybackControls';
@@ -45,6 +45,11 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
   const [genderResult, setGenderResult] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
+  const [isAiAvailable, setIsAiAvailable] = useState(false);
+
+  useEffect(() => {
+    setIsAiAvailable(isAiConfigured());
+  }, []);
 
 
   const handleResetZoom = useCallback(() => {
@@ -195,6 +200,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ file, onReset }) => {
             isAnalyzingGender={isAnalyzingGender}
             isTranscribing={isTranscribing}
             isLoading={isLoading}
+            isAiAvailable={isAiAvailable}
             onReset={onReset}
             onAnalyzeGender={handleAnalyzeGender}
             onTranscribe={handleTranscribe}

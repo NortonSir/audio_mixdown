@@ -3,6 +3,10 @@ import { GoogleGenAI } from "@google/genai";
 const API_KEY = process.env.API_KEY as string;
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
+export const isAiConfigured = (): boolean => {
+  return !!API_KEY && API_KEY.trim() !== '';
+};
+
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
